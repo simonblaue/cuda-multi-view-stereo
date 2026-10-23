@@ -19,6 +19,8 @@ limitations under the License.
 
 #include <opencv2/core.hpp>
 
+#include <vector>
+
 namespace cv
 {
 
@@ -35,6 +37,30 @@ void loadGlobalPoses(const String& filename, std::vector<Mat>& Rs, std::vector<M
 
 void saveViewIdSets(const String& filename, InputArrayOfArrays viewIdSets);
 void loadViewIdSets(const String& filename, std::vector<Mat>& viewIdSets);
+
+/** @brief The camera calibration of a multi-camera rig.
+The layout follows the calibration files written by common rig calibration
+tools: a "nb_camera" entry and one "camera_<i>" node per camera, each of them
+holding a 3x3 intrinsic matrix, a distortion coefficient vector and a 4x4
+camera pose matrix.
+*/
+struct CameraCalibration
+{
+	int nbCameras = 0;             //!< number of cameras in the rig
+	std::vector<Mat> cameras;       //!< 3x3 intrinsic matrices (CV_64F)
+	std::vector<Mat> distortions;   //!< distortion coefficient vectors (CV_64F)
+	std::vector<Mat> poses;         //!< 4x4 camera pose matrices (CV_64F)
+	std::vector<int> distortionTypes; //!< distortion model id stored in the file
+	std::vector<int> cameraGroups;  //!< camera group id stored in the file
+	std::vector<Size> imageSizes;   //!< image size the calibration was made for
+};
+
+/** @brief Loads a multi-camera rig calibration file.
+@param filename Path of the calibration file.
+@param calibration Output calibration.
+@return The number of cameras read from the file.
+*/
+int loadCameraCalibration(const String& filename, CameraCalibration& calibration);
 
 } // namespace cv
 

@@ -491,6 +491,9 @@ public:
 		: method_(method), pmIters_(pmIters), gcIters_(gcIters), multiScale_(multiScale)
 	{
 		callBack_ = nullptr;
+		hasDepthRange_ = false;
+		depthRangeMin_ = 0.f;
+		depthRangeMax_ = 0.f;
 	}
 
 	Ptr<RedBlackPropagation> createPropagation(const std::vector<Mat>& Fs, const std::vector<Matx33d>& Ks,
@@ -540,12 +543,25 @@ public:
 
 		// project to camera coordinate
 		std::vector<Vec3f> Xcs;
-		projectToCamera(sparsePoints, Rs[0], ts[0], Xcs);
 
 		// compute depth range
-		std::sort(std::begin(Xcs), std::end(Xcs), [](const Vec3f& lhs, const Vec3f& rhs) { return lhs[2] < rhs[2]; });
-		const float minZ = floatCast(LAMBDA_MIN * Xcs[cvFloor(C_MIN * Xcs.size())][2]);
-		const float maxZ = floatCast(LAMBDA_MAX * Xcs[cvFloor(C_MAX * Xcs.size())][2]);
+		float minZ, maxZ;
+		if (hasDepthRange_)
+		{
+			// the depth range is given explicitly, the sparse points are not used
+			minZ = depthRangeMin_;
+			maxZ = depthRangeMax_;
+		}
+		else
+		{
+			projectToCamera(sparsePoints, Rs[0], ts[0], Xcs);
+			if (Xcs.empty())
+				CV_Error(Error::StsBadArg, "The initial object points must not be empty unless an explicit depth range is set");
+
+			std::sort(std::begin(Xcs), std::end(Xcs), [](const Vec3f& lhs, const Vec3f& rhs) { return lhs[2] < rhs[2]; });
+			minZ = floatCast(LAMBDA_MIN * Xcs[cvFloor(C_MIN * Xcs.size())][2]);
+			maxZ = floatCast(LAMBDA_MAX * Xcs[cvFloor(C_MAX * Xcs.size())][2]);
+		}
 
 		std::vector<TextureImage> d_Fs, d_Ds;
 		uploadImages(Fs, d_Fs);
@@ -605,7 +621,8 @@ public:
 			images, cameras, rotations, translations, viewIdSets);
 
 		const Mat sparsePoints = _initialObjectPoints.getMat();
-		CV_Assert(sparsePoints.type() == CV_32FC3 || sparsePoints.type() == CV_64FC3);
+		if (!sparsePoints.empty())
+			CV_Assert(sparsePoints.type() == CV_32FC3 || sparsePoints.type() == CV_64FC3);
 
 		const int nimages = static_cast<int>(images.size());
 		const int nreferences = static_cast<int>(viewIdSets.size());
@@ -677,9 +694,20 @@ public:
 				depths, normals, masks, objectPoints, objectColors, objectNormals);
 		}
 
-		Mat(objectPoints).reshape(3, 1).copyTo(_objectPoints);
-		Mat(objectColors).reshape(3, 1).copyTo(_objectColors);
-		Mat(objectNormals).reshape(3, 1).copyTo(_objectNormals);
+		// an empty cloud cannot be reshaped to one row, so the outputs are
+		// cleared instead
+		if (objectPoints.empty())
+		{
+			if (_objectPoints.needed()) _objectPoints.release();
+			if (_objectColors.needed()) _objectColors.release();
+			if (_objectNormals.needed()) _objectNormals.release();
+		}
+		else
+		{
+			Mat(objectPoints).reshape(3, 1).copyTo(_objectPoints);
+			Mat(objectColors).reshape(3, 1).copyTo(_objectColors);
+			Mat(objectNormals).reshape(3, 1).copyTo(_objectNormals);
+		}
 
 		if (_depths.needed())
 		{
@@ -718,6 +746,17 @@ public:
 		callBack_ = callBack;
 	}
 
+	void setDepthRange(double minZ, double maxZ) override
+	{
+		if (!(minZ > 0.0))
+			CV_Error(Error::StsBadArg, "The minimum depth must be positive");
+		if (!(maxZ > minZ))
+			CV_Error(Error::StsBadArg, "The maximum depth must be larger than the minimum depth");
+		depthRangeMin_ = floatCast(minZ);
+		depthRangeMax_ = floatCast(maxZ);
+		hasDepthRange_ = true;
+	}
+
 private:
 
 	PatchMatchMethod method_;
@@ -725,6 +764,9 @@ private:
 	int gcIters_;
 	bool multiScale_;
 	DebugCallBack callBack_;
+	bool hasDepthRange_;
+	float depthRangeMin_;
+	float depthRangeMax_;
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

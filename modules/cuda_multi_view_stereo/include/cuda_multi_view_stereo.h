@@ -77,6 +77,17 @@ public:
 	virtual void setGeometricConsistencyIters(int gcIters) = 0;
 	virtual void setMultiScale(bool multiScale) = 0;
 	virtual void setDebugCallBack(DebugCallBack callBack) = 0;
+
+	/** @brief Sets the depth range used by the PatchMatch search explicitly.
+	@param minZ Minimum depth (distance along the optical axis of the reference camera).
+	@param maxZ Maximum depth.
+	By default the depth range is derived from the initial object points (the 1%
+	and 99% percentiles of their depths, scaled by 0.75 and 1.25).  When the
+	range is set explicitly, the initial object points are not used any more
+	and may be empty.  This is useful for multi-view setups without a sparse
+	point cloud, e.g. video sequences with a known calibration only.
+	*/
+	virtual void setDepthRange(double minZ, double maxZ) = 0;
 };
 
 } // namespace cuda

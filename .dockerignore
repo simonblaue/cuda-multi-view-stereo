@@ -1,0 +1,45 @@
+# Build artefacts
+build/
+build*/
+_build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json
+*.o
+*.a
+*.so
+*.so.*
+*.ninja
+.ninja_deps
+.ninja_log
+
+# Version control
+.git/
+.gitignore
+.github/
+
+# Data / outputs produced by the samples
+outputs/
+output/
+*.ply
+*.png
+*.jpg
+*.jpeg
+*.bin
+*.zip
+*.tar
+*.tar.gz
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Keep the agent instructions and container assets
+!AGENTS.md
+!Dockerfile
+!docker/

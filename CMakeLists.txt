@@ -8,3 +8,10 @@ endif()
 
 add_subdirectory(modules)
 add_subdirectory(samples)
+
+# Optional developer tools (synthetic scene generator + accuracy checker).
+# Not built by default: enable with -DCUMVS_BUILD_TOOLS=ON.
+option(CUMVS_BUILD_TOOLS "Build the developer tools in tools/" OFF)
+if(CUMVS_BUILD_TOOLS)
+	add_subdirectory(tools/synthetic_scene)
+endif()
