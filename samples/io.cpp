@@ -15,6 +15,7 @@ limitations under the License.
 */
 
 #include "io.h"
+#include "yaml_lite.h"
 
 #include <filesystem>
 
@@ -214,6 +215,67 @@ void loadViewIdSets(const String& filename, std::vector<Mat>& viewIdSets)
 		node["view_id_set"] >> viewIds;
 		viewIdSets.push_back(viewIds);
 	}
+}
+
+int loadCameraCalibration(const String& filename, CameraCalibration& calibration)
+{
+	// the OpenCV file storage cannot read the flow mappings that hold a
+	// matrix, which is the layout of the calibration files, so the file is
+	// parsed here
+	const YamlNode root = parseYamlFile(filename);
+
+	const int nbCameras = root.getInt("nb_camera", 0);
+	const std::string message = format("The calibration file '%s' must contain a positive 'nb_camera' entry", filename.c_str());
+	if (nbCameras <= 0)
+		CV_Error(Error::StsBadArg, message.c_str());
+
+	calibration.nbCameras = nbCameras;
+	calibration.cameras.clear();
+	calibration.distortions.clear();
+	calibration.poses.clear();
+	calibration.distortionTypes.clear();
+	calibration.cameraGroups.clear();
+	calibration.imageSizes.clear();
+
+	for (int i = 0; i < nbCameras; i++)
+	{
+		const YamlNode* node = root.find(format("camera_%d", i));
+
+		const std::string missing = format("The calibration file '%s' has no 'camera_%d' entry", filename.c_str(), i);
+		if (node == nullptr)
+			CV_Error(Error::StsBadArg, missing.c_str());
+
+		Mat K = node->getMatrix("camera_matrix");
+		Mat pose = node->getMatrix("camera_pose_matrix");
+		Mat D = node->getMatrix("distortion_vector");
+
+		const std::string invalid = format("The 'camera_%d' entry of '%s' is malformed", i, filename.c_str());
+		if (K.rows != 3 || K.cols != 3)
+			CV_Error(Error::StsBadArg, invalid.c_str());
+		if (pose.rows != 4 || pose.cols != 4)
+			CV_Error(Error::StsBadArg, invalid.c_str());
+
+		K.convertTo(K, CV_64F);
+		pose.convertTo(pose, CV_64F);
+		if (!D.empty())
+			D.convertTo(D, CV_64F);
+		else
+			D = Mat::zeros(1, 5, CV_64F);
+
+		const int distortionType = node->getInt("distortion_type", 0);
+		const int cameraGroup = node->getInt("camera_group", 0);
+		const int width = node->getInt("img_width", 0);
+		const int height = node->getInt("img_height", 0);
+
+		calibration.cameras.push_back(K);
+		calibration.distortions.push_back(D);
+		calibration.poses.push_back(pose);
+		calibration.distortionTypes.push_back(distortionType);
+		calibration.cameraGroups.push_back(cameraGroup);
+		calibration.imageSizes.push_back(Size(width, height));
+	}
+
+	return nbCameras;
 }
 
 } // namespace cv

@@ -1,0 +1,42 @@
+# =============================================================================
+#  Convenience wrapper around the Dockerfile in this repo.
+#
+#    docker compose build              # builds the image (OpenCV + CUMVS)
+#    docker compose run --rm cumvs     # interactive shell with all 3 L40s
+#
+#  Requires the NVIDIA Container Toolkit on the host
+#  (https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/).
+#
+#  The `gpus: all` key needs Docker Compose v2.30+.  On older versions use
+#  `runtime: nvidia` together with the NVIDIA_VISIBLE_DEVICES env var.
+# =============================================================================
+
+services:
+  cumvs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CUDA_VERSION: "12.4.1"
+        UBUNTU_VERSION: "22.04"
+        OPENCV_VERSION: "4.10.0"
+        CUDA_ARCH_BIN: "89"   # NVIDIA L40 (Ada Lovelace, sm_89)
+        CUDA_ARCH_PTX: "89"
+    image: cumvs:latest
+    container_name: cumvs
+    working_dir: /workspace/cumvs
+    volumes:
+      # Your working copy.  It does NOT shadow the prebuilt binaries, which
+      # stay in /opt/cumvs-build (and on PATH); rebuild explicitly after
+      # editing the sources.
+      - .:/workspace/cumvs
+      - /media/nvme3/sblaue/Wedel:/Data
+    gpus: all
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility,graphics"
+      # Pin a single GPU by uncommenting and adapting the two lines above:
+      #   NVIDIA_VISIBLE_DEVICES: "1"
+      #   CUDA_VISIBLE_DEVICES: "1"
+    stdin_open: true
+    tty: true
