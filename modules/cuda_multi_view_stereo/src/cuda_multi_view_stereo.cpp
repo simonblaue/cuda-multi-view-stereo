@@ -628,6 +628,19 @@ public:
 		const int nreferences = static_cast<int>(viewIdSets.size());
 		const auto activeViewIndices = getActiveViewIndices(viewIdSets);
 
+		if (!inputMasks_.empty())
+		{
+			CV_Assert(static_cast<int>(inputMasks_.size()) == nimages);
+			for (int i = 0; i < nimages; i++)
+			{
+				if (inputMasks_[i].empty())
+					continue;
+				if (inputMasks_[i].type() != CV_8U || inputMasks_[i].size() != images[i].size())
+					CV_Error(Error::StsBadArg,
+						format("The mask of view %d must be CV_8U and have the size of the image", i).c_str());
+			}
+		}
+
 		std::vector<Mat> depths(nimages), normals(nimages), masks(nimages);
 		std::vector<int> levels(nimages, 0);
 		const int maxLevel = multiScale_ ? calcPyramidLevels(images, levels) : 0;
@@ -673,10 +686,22 @@ public:
 				}
 			}
 		}
+		// the fusion mask of a view is the input mask (if any), otherwise all
+		// pixels of a reference view are valid.  The masks are consumed during
+		// the fusion, so the input masks are copied for every compute() call.
+		if (!inputMasks_.empty())
+		{
+			for (int i = 0; i < nimages; i++)
+			{
+				if (!inputMasks_[i].empty())
+					masks[i] = inputMasks_[i].clone();
+			}
+		}
 		for (int i = 0; i < nreferences; i++)
 		{
 			const int referenceIdx = viewIdSets[i].at<int>(0);
-			masks[referenceIdx] = Mat::ones(depths[referenceIdx].size(), CV_8U);
+			if (masks[referenceIdx].empty())
+				masks[referenceIdx] = Mat::ones(depths[referenceIdx].size(), CV_8U);
 		}
 
 		// generate point cloud
@@ -757,6 +782,14 @@ public:
 		hasDepthRange_ = true;
 	}
 
+	void setMasks(const std::vector<Mat>& masks) override
+	{
+		inputMasks_.clear();
+		inputMasks_.reserve(masks.size());
+		for (const auto& mask : masks)
+			inputMasks_.push_back(mask.empty() ? Mat() : mask.clone());
+	}
+
 private:
 
 	PatchMatchMethod method_;
@@ -767,6 +800,7 @@ private:
 	bool hasDepthRange_;
 	float depthRangeMin_;
 	float depthRangeMax_;
+	std::vector<Mat> inputMasks_;
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

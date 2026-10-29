@@ -61,6 +61,7 @@ cloud is unchanged.
 
 #include "io.h"
 #include "draw.h"
+#include "fabric_mask.h"
 #include "rig_plot.h"
 
 static std::string keys =
@@ -88,6 +89,13 @@ static std::string keys =
 "{ save-depth-video |      1 | whether the depth map videos are written.                                     }"
 "{ rig-plot         |      1 | whether the layout of the camera rig is drawn (distances and angles).        }"
 "{ rig-plot-file    | rig_layout.png | name of the drawing of the camera rig (in the output directory).     }"
+"{ fabric-mask      |      0 | restrict the reconstruction to the fabric lit by the projector.              }"
+"{ fabric-mask-frames |   10 | number of frames accumulated into the fabric brightness maximum.             }"
+"{ fabric-threshold |     -1 | brightness threshold of the fabric in [0, 255] (-1: Otsu).                  }"
+"{ fabric-min-area  |   0.02 | minimum fabric area as a fraction of the image.                              }"
+"{ fabric-erode     |      3 | erosion of the fabric mask in pixels (0: no erosion).                        }"
+"{ fabric-close     |      9 | morphological closing kernel of the fabric mask in pixels.                   }"
+"{ fabric-open      |      5 | morphological opening kernel of the fabric mask in pixels.                   }"
 "{ num-threads      |     -1 | number of threads for CPU processing (-1:auto detect).                      }"
 "{ debug d          |        | enable debug view.                                                          }"
 "{ help  h          |        | print help message.                                                         }";
@@ -358,7 +366,7 @@ triangulated depths bound the scene without being sensitive to mismatches.
 */
 static DepthRange estimateDepthRangeFromFeatures(const std::vector<Mat>& images,
 	const std::vector<Mat>& cameras, const std::vector<Mat>& rotations,
-	const std::vector<Vec3d>& centers)
+	const std::vector<Vec3d>& centers, const std::vector<Mat>* masks = nullptr)
 {
 	DepthRange result;
 
@@ -377,7 +385,11 @@ static DepthRange estimateDepthRangeFromFeatures(const std::vector<Mat>& images,
 			cvtColor(images[i], gray, COLOR_BGR2GRAY);
 		else
 			gray = images[i];
-		orb->detectAndCompute(gray, noArray(), keypoints[i], descriptors[i]);
+
+		Mat mask;
+		if (masks && i < static_cast<int>(masks->size()) && !(*masks)[i].empty())
+			mask = (*masks)[i];
+		orb->detectAndCompute(gray, mask, keypoints[i], descriptors[i]);
 	}
 
 	std::vector<Matx33d> invK(ncameras);
@@ -911,6 +923,13 @@ static void run(int argc, char* argv[])
 	const auto saveDepthVideo = parser.get<int>("save-depth-video") == 1;
 	const auto rigPlot = parser.get<int>("rig-plot") == 1;
 	const auto rigPlotFile = parser.get<std::string>("rig-plot-file");
+	const auto fabricMaskEnabled = parser.get<int>("fabric-mask") == 1;
+	const auto fabricMaskFrames = std::max(1, parser.get<int>("fabric-mask-frames"));
+	const auto fabricThreshold = parser.get<double>("fabric-threshold");
+	const auto fabricMinArea = parser.get<double>("fabric-min-area");
+	const auto fabricErode = parser.get<int>("fabric-erode");
+	const auto fabricClose = parser.get<int>("fabric-close");
+	const auto fabricOpen = parser.get<int>("fabric-open");
 	const auto debugView = parser.has("debug");
 	auto nthreads = parser.get<int>("num-threads");
 
@@ -976,6 +995,14 @@ static void run(int argc, char* argv[])
 	std::cout << "save point clouds                : " << (savePly ? "Yes" : "No") << std::endl;
 	std::cout << "save depth map videos            : " << (saveDepthVideo ? "Yes" : "No") << std::endl;
 	std::cout << "draw the camera rig layout       : " << (rigPlot ? "Yes" : "No") << std::endl;
+	std::cout << "fabric mask                      : " << (fabricMaskEnabled ? "Yes" : "No") << std::endl;
+	if (fabricMaskEnabled)
+	{
+		std::cout << "fabric mask frames               : " << fabricMaskFrames << std::endl;
+		std::cout << "fabric mask threshold            : " << (fabricThreshold > 0.0 ? std::to_string(fabricThreshold) : std::string("Otsu")) << std::endl;
+		std::cout << "fabric mask min area             : " << fabricMinArea << std::endl;
+		std::cout << "fabric mask erode                : " << fabricErode << std::endl;
+	}
 	std::cout << "number of threads                : " << nthreads << std::endl;
 	std::cout << "========================================================" << std::endl << std::endl;
 
@@ -1197,6 +1224,79 @@ static void run(int argc, char* argv[])
 	}
 
 	/////////////////////////////////////////////////////////////////////////////
+	// fabric mask
+	/////////////////////////////////////////////////////////////////////////////
+
+	std::vector<Mat> fabricMasks(ncameras);
+	if (fabricMaskEnabled)
+	{
+		FabricMaskOptions maskOptions;
+		maskOptions.frames = fabricMaskFrames;
+		maskOptions.threshold = fabricThreshold;
+		maskOptions.minArea = fabricMinArea;
+		maskOptions.closeSize = fabricClose;
+		maskOptions.openSize = fabricOpen;
+		maskOptions.erodeSize = fabricErode;
+
+		makeDirectory(outputDir);
+		makeDirectory(outputDir + "/masks");
+
+		for (int i = 0; i < ncameras; i++)
+		{
+			Mat maxGray;
+			// accumulate the brightness maximum over the first frames; the
+			// captures are positioned after the first frame
+			const int framesToRead = std::min(fabricMaskFrames, frameCount);
+			for (int k = 0; k < framesToRead; k++)
+			{
+				Mat frame;
+				if (k == 0)
+				{
+					firstFrames[i].copyTo(frame);
+				}
+				else
+				{
+					if (!captures[i].read(frame))
+						break;
+				}
+
+				Mat processed = processFrame(frame, setups[i]);
+				Mat gray;
+				if (processed.channels() == 3)
+					cvtColor(processed, gray, COLOR_BGR2GRAY);
+				else if (processed.channels() == 4)
+					cvtColor(processed, gray, COLOR_BGRA2GRAY);
+				else
+					gray = processed;
+
+				if (maxGray.empty())
+					gray.copyTo(maxGray);
+				else
+					cv::max(maxGray, gray, maxGray);
+			}
+
+			fabricMasks[i] = estimateFabricMask(maxGray, maskOptions);
+			if (fabricMasks[i].empty())
+			{
+				std::cout << "warning: could not estimate a fabric mask for camera_" << i << ", using the whole image" << std::endl;
+			}
+			else
+			{
+				const double areaRatio = static_cast<double>(countNonZero(fabricMasks[i])) / static_cast<double>(maxGray.total());
+				std::cout << "fabric mask camera_" << i << "      : " << (areaRatio * 100.0) << "% of the image" << std::endl;
+				const String maskPath = format("%s/masks/camera_%d.png", outputDir.c_str(), i);
+				checkTrue(imwrite(maskPath, fabricMasks[i]), format("Cannot write the fabric mask '%s'", maskPath.c_str()).c_str());
+			}
+
+			// restore the capture to the state after the first frame
+			captures[i].set(CAP_PROP_POS_FRAMES, 0);
+			Mat discard;
+			captures[i].read(discard);
+		}
+		std::cout << std::endl;
+	}
+
+	/////////////////////////////////////////////////////////////////////////////
 	// depth range
 	/////////////////////////////////////////////////////////////////////////////
 
@@ -1217,7 +1317,8 @@ static void run(int argc, char* argv[])
 		for (int i = 0; i < ncameras; i++)
 			firstImages[i] = processFrame(firstFrames[i], setups[i]);
 
-		DepthRange range = estimateDepthRangeFromFeatures(firstImages, cameras, rotations, centers);
+		DepthRange range = estimateDepthRangeFromFeatures(firstImages, cameras, rotations, centers,
+			fabricMaskEnabled ? &fabricMasks : nullptr);
 		if (!range.valid)
 		{
 			std::cout << "warning: " << range.detail << ", trying a stereo match" << std::endl;
@@ -1275,6 +1376,8 @@ static void run(int argc, char* argv[])
 	mvs->setGeometricConsistencyIters(gcIters);
 	mvs->setMultiScale(multiScale);
 	mvs->setDepthRange(searchMinZ, searchMaxZ);
+	if (fabricMaskEnabled)
+		mvs->setMasks(fabricMasks);
 	if (debugView)
 		mvs->setDebugCallBack(debugCallBack);
 
@@ -1386,9 +1489,28 @@ static void run(int argc, char* argv[])
 				if (i >= static_cast<int>(depths.size()) || depths[i].empty())
 					continue;
 
-				const Mat color = colorizeDepth(depths[i], searchMinZ, searchMaxZ);
+				Mat color = colorizeDepth(depths[i], searchMinZ, searchMaxZ);
 				if (color.empty())
 					continue;
+
+				if (fabricMaskEnabled && i < static_cast<int>(fabricMasks.size()) && !fabricMasks[i].empty())
+				{
+					const Size& depthSize = depths[i].size();
+					if (fabricMasks[i].size() == depthSize)
+					{
+						Mat maskedColor = color.clone();
+						maskedColor.setTo(Scalar::all(0), fabricMasks[i] == 0);
+						color = maskedColor;
+					}
+					else
+					{
+						Mat resizedMask;
+						resize(fabricMasks[i], resizedMask, depthSize, 0, 0, INTER_NEAREST);
+						Mat maskedColor = color.clone();
+						maskedColor.setTo(Scalar::all(0), resizedMask == 0);
+						color = maskedColor;
+					}
+				}
 
 				if (!depthWriters[i].isOpened())
 				{

@@ -14,7 +14,7 @@ if (CMAKE_COMPILER_IS_GNUCXX)
 	set(CMAKE_CXX_FLAGS "-O3 -Wall")
 endif()
 
-set(SRCS_COMMON io.cpp io.h draw.cpp draw.h yaml_lite.cpp yaml_lite.h rig_plot.cpp rig_plot.h)
+set(SRCS_COMMON io.cpp io.h draw.cpp draw.h yaml_lite.cpp yaml_lite.h rig_plot.cpp rig_plot.h fabric_mask.cpp fabric_mask.h)
 
 add_executable(app_initialize_ETH3D app_initialize_ETH3D.cpp ${SRCS_COMMON})
 target_link_libraries(app_initialize_ETH3D ${OpenCV_LIBS} OpenMP::OpenMP_CXX)

@@ -17,6 +17,8 @@ limitations under the License.
 #ifndef __CUDA_MULTI_VIEW_STEREO_H__
 #define __CUDA_MULTI_VIEW_STEREO_H__
 
+#include <vector>
+
 #include <opencv2/core.hpp>
 
 namespace cv
@@ -88,6 +90,19 @@ public:
 	point cloud, e.g. video sequences with a known calibration only.
 	*/
 	virtual void setDepthRange(double minZ, double maxZ) = 0;
+
+	/** @brief Sets the per-view masks that restrict the fused point cloud.
+	@param masks One mask per view (CV_8U and the same size as the images passed
+	to compute()).  Non-zero pixels are valid.  An empty Mat means "no mask" for
+	that view, an empty vector removes all masks.
+
+	A point is only fused if it projects into a valid pixel of the mask of the
+	reference view and of every other view that contributes to the fusion.  This
+	is useful for setups in which the reconstruction is limited to a known
+	region, e.g. a fabric lit by a projector in a dark room.  The masks are
+	copied, so the caller may reuse or release the buffers after the call.
+	*/
+	virtual void setMasks(const std::vector<Mat>& masks) = 0;
 };
 
 } // namespace cuda
