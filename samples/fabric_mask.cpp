@@ -44,16 +44,16 @@ void accumulateFabricBrightness(Mat& maxGray, const Mat& frame)
 	cv::max(maxGray, gray, maxGray);
 }
 
-Mat estimateFabricMask(const Mat& maxGray, const FabricMaskOptions& options)
+static Mat estimateFabricMaskFromGray(const Mat& grayInput, const FabricMaskOptions& options)
 {
-	CV_Assert(maxGray.type() == CV_8UC1);
-	if (maxGray.empty())
+	CV_Assert(grayInput.type() == CV_8UC1);
+	if (grayInput.empty())
 		return Mat();
 
 	// the projector speckle and the sensor noise are high frequency; a small
 	// blur keeps the fabric boundary while removing single hot pixels
 	Mat blurred;
-	GaussianBlur(maxGray, blurred, Size(5, 5), 0);
+	GaussianBlur(grayInput, blurred, Size(5, 5), 0);
 
 	Mat binary;
 	if (options.threshold > 0.0)
@@ -90,14 +90,14 @@ Mat estimateFabricMask(const Mat& maxGray, const FabricMaskOptions& options)
 	for (const auto& contour : contours)
 		largest = std::max(largest, contourArea(contour));
 
-	const double imageArea = static_cast<double>(maxGray.total());
+	const double imageArea = static_cast<double>(grayInput.total());
 	if (largest <= 0.0 || largest < options.minArea * imageArea)
 		return Mat();
 
 	// keep the largest component and all components of comparable size; the
 	// fabric can be split into several parts by a dark band of the projection
 	const double minComponent = std::max(0.2 * largest, 0.001 * imageArea);
-	Mat mask = Mat::zeros(maxGray.size(), CV_8U);
+	Mat mask = Mat::zeros(grayInput.size(), CV_8U);
 	for (const auto& contour : contours)
 	{
 		if (contourArea(contour) < minComponent)
@@ -121,6 +121,24 @@ Mat estimateFabricMask(const Mat& maxGray, const FabricMaskOptions& options)
 	}
 
 	return mask;
+}
+
+Mat estimateFabricMask(const Mat& maxGray, const FabricMaskOptions& options)
+{
+	return estimateFabricMaskFromGray(maxGray, options);
+}
+
+Mat estimateFabricMaskFromFrame(const Mat& frame, const FabricMaskOptions& options)
+{
+	Mat gray;
+	if (frame.channels() == 3)
+		cvtColor(frame, gray, COLOR_BGR2GRAY);
+	else if (frame.channels() == 4)
+		cvtColor(frame, gray, COLOR_BGRA2GRAY);
+	else
+		gray = frame;
+
+	return estimateFabricMaskFromGray(gray, options);
 }
 
 } // namespace cv

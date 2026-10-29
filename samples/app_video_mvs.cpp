@@ -1241,48 +1241,19 @@ static void run(int argc, char* argv[])
 		makeDirectory(outputDir);
 		makeDirectory(outputDir + "/masks");
 
+		// a fixed static mask is used for the depth range estimate and for
+		// seeding the fusion; the per-frame masks are applied during the frame loop
 		for (int i = 0; i < ncameras; i++)
 		{
-			Mat maxGray;
-			// accumulate the brightness maximum over the first frames; the
-			// captures are positioned after the first frame
-			const int framesToRead = std::min(fabricMaskFrames, frameCount);
-			for (int k = 0; k < framesToRead; k++)
-			{
-				Mat frame;
-				if (k == 0)
-				{
-					firstFrames[i].copyTo(frame);
-				}
-				else
-				{
-					if (!captures[i].read(frame))
-						break;
-				}
-
-				Mat processed = processFrame(frame, setups[i]);
-				Mat gray;
-				if (processed.channels() == 3)
-					cvtColor(processed, gray, COLOR_BGR2GRAY);
-				else if (processed.channels() == 4)
-					cvtColor(processed, gray, COLOR_BGRA2GRAY);
-				else
-					gray = processed;
-
-				if (maxGray.empty())
-					gray.copyTo(maxGray);
-				else
-					cv::max(maxGray, gray, maxGray);
-			}
-
-			fabricMasks[i] = estimateFabricMask(maxGray, maskOptions);
+			Mat firstImage = processFrame(firstFrames[i], setups[i]);
+			fabricMasks[i] = estimateFabricMaskFromFrame(firstImage, maskOptions);
 			if (fabricMasks[i].empty())
 			{
 				std::cout << "warning: could not estimate a fabric mask for camera_" << i << ", using the whole image" << std::endl;
 			}
 			else
 			{
-				const double areaRatio = static_cast<double>(countNonZero(fabricMasks[i])) / static_cast<double>(maxGray.total());
+				const double areaRatio = static_cast<double>(countNonZero(fabricMasks[i])) / static_cast<double>(firstImage.total());
 				std::cout << "fabric mask camera_" << i << "      : " << (areaRatio * 100.0) << "% of the image" << std::endl;
 				const String maskPath = format("%s/masks/camera_%d.png", outputDir.c_str(), i);
 				checkTrue(imwrite(maskPath, fabricMasks[i]), format("Cannot write the fabric mask '%s'", maskPath.c_str()).c_str());
@@ -1400,6 +1371,19 @@ static void run(int argc, char* argv[])
 	std::vector<int> currentFrames(ncameras, 1);
 	std::vector<Mat> images(ncameras);
 	std::vector<VideoWriter> depthWriters(ncameras);
+	std::vector<VideoWriter> maskWriters(ncameras);
+	FabricMaskOptions maskOptions;
+	if (fabricMaskEnabled)
+	{
+		maskOptions.frames = fabricMaskFrames;
+		maskOptions.threshold = fabricThreshold;
+		maskOptions.minArea = fabricMinArea;
+		maskOptions.closeSize = fabricClose;
+		maskOptions.openSize = fabricOpen;
+		maskOptions.erodeSize = fabricErode;
+		makeDirectory(outputDir + "/mask");
+		makeDirectory(outputDir + "/masks");
+	}
 
 	const int nframes = (lastFrame >= frameStart) ? ((lastFrame - frameStart) / frameStep + 1) : 0;
 
@@ -1447,6 +1431,22 @@ static void run(int argc, char* argv[])
 			break;
 		}
 
+		std::vector<Mat> frameMasks;
+		if (fabricMaskEnabled)
+		{
+			frameMasks.assign(ncameras, Mat());
+			for (int i = 0; i < ncameras; i++)
+			{
+				frameMasks[i] = estimateFabricMaskFromFrame(images[i], maskOptions);
+				if (frameMasks[i].empty() && !fabricMasks[i].empty())
+					fabricMasks[i].copyTo(frameMasks[i]);
+				else if (!frameMasks[i].empty())
+					fabricMasks[i] = frameMasks[i].clone();
+			}
+			if (!frameMasks.empty())
+				mvs->setMasks(frameMasks);
+		}
+
 		Mat densePoints, denseColors, denseNormals;
 		std::vector<Mat> depths;
 		mvs->compute(images, cameras, rotations, translations, viewIdSets, Mat(),
@@ -1481,6 +1481,30 @@ static void run(int argc, char* argv[])
 			viz::writeCloud(path, densePoints, denseColors);
 		}
 
+		// fabric mask videos
+		if (fabricMaskEnabled)
+		{
+			for (int i = 0; i < ncameras; i++)
+			{
+				Mat maskOut = (i < static_cast<int>(frameMasks.size()) && !frameMasks[i].empty()) ? frameMasks[i] : Mat();
+				if (maskOut.empty() && i < static_cast<int>(fabricMasks.size()))
+					maskOut = fabricMasks[i];
+				if (maskOut.empty())
+					continue;
+
+				if (!maskWriters[i].isOpened())
+				{
+					const String path = format("%s/mask/camera_%d.mp4", outputDir.c_str(), i);
+					if (openVideoWriter(path, fps, maskOut.size(), maskWriters[i]) != 0)
+					{
+						std::cout << "warning: cannot open the fabric mask video writer for camera_" << i << std::endl;
+						continue;
+					}
+				}
+				maskWriters[i].write(maskOut);
+			}
+		}
+
 		// depth map videos
 		if (saveDepthVideo)
 		{
@@ -1493,19 +1517,24 @@ static void run(int argc, char* argv[])
 				if (color.empty())
 					continue;
 
-				if (fabricMaskEnabled && i < static_cast<int>(fabricMasks.size()) && !fabricMasks[i].empty())
+				const Mat* activeMask = nullptr;
+				if (fabricMaskEnabled && i < static_cast<int>(frameMasks.size()) && !frameMasks[i].empty())
+					activeMask = &frameMasks[i];
+				else if (fabricMaskEnabled && i < static_cast<int>(fabricMasks.size()) && !fabricMasks[i].empty())
+					activeMask = &fabricMasks[i];
+				if (activeMask)
 				{
 					const Size& depthSize = depths[i].size();
-					if (fabricMasks[i].size() == depthSize)
+					if (activeMask->size() == depthSize)
 					{
 						Mat maskedColor = color.clone();
-						maskedColor.setTo(Scalar::all(0), fabricMasks[i] == 0);
+						maskedColor.setTo(Scalar::all(0), *activeMask == 0);
 						color = maskedColor;
 					}
 					else
 					{
 						Mat resizedMask;
-						resize(fabricMasks[i], resizedMask, depthSize, 0, 0, INTER_NEAREST);
+						resize(*activeMask, resizedMask, depthSize, 0, 0, INTER_NEAREST);
 						Mat maskedColor = color.clone();
 						maskedColor.setTo(Scalar::all(0), resizedMask == 0);
 						color = maskedColor;
@@ -1528,6 +1557,11 @@ static void run(int argc, char* argv[])
 	}
 
 	for (auto& writer : depthWriters)
+	{
+		if (writer.isOpened())
+			writer.release();
+	}
+	for (auto& writer : maskWriters)
 	{
 		if (writer.isOpened())
 			writer.release();

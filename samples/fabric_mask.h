@@ -57,6 +57,13 @@ no fabric was found, e.g. because it is smaller than #FabricMaskOptions::minArea
 */
 Mat estimateFabricMask(const Mat& maxGray, const FabricMaskOptions& options);
 
+/** @brief Estimates the fabric mask from a single frame.
+@param frame A color or grayscale image in the processed coordinate frame.
+@param options The estimation options.
+@return A CV_8UC1 mask (255 inside the fabric, 0 outside).
+*/
+Mat estimateFabricMaskFromFrame(const Mat& frame, const FabricMaskOptions& options);
+
 } // namespace cv
 
 #endif // !__FABRIC_MASK_H__
