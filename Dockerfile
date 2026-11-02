@@ -3,7 +3,7 @@
 # =============================================================================
 #  cuda-multi-view-stereo (CUMVS) -- self-contained GPU development container
 #
-#  Host target : 3x NVIDIA L40 (Ada Lovelace, compute capability 8.9 / sm_89)
+#  Host target : NVIDIA GeForce GTX 1080 Ti (Pascal, compute capability 6.1 / sm_61)
 #
 #  Baked-in dependencies
 #    * CUDA Toolkit 12.4.1 (nvcc)              -> /usr/local/cuda
@@ -24,12 +24,11 @@
 #      `#if (CUDART_VERSION < 12040)` and cudev/util/detail/tuple.hpp uses
 #      `thrust::tuple`.  OpenCV 4.9.x does NOT build against CUDA 12.4.
 #    - `cudev` and `viz` live in opencv_contrib, NOT in the main opencv repo.
-#    - CUDA_ARCH_BIN=89 emits native SASS for the L40.  The repo default
-#      "52;61;72;75;86" contains no sm_89 and would fall back to PTX JIT
-#      (slow first launch, and fails outright on future drivers).
+#    - CUDA_ARCH_BIN=61 emits native SASS for the GTX 1080 Ti.  Pascal sm_61 is
+#      also one of the repo's default "52;61;72;75;86" targets, so those
+#      prebuilt binaries run here without PTX JIT.
 #    - The repo itself is single-GPU: it never calls cudaSetDevice(), so it
-#      always runs on the *current* device.  Use CUDA_VISIBLE_DEVICES to pin
-#      an instance to one of the three L40s and run three in parallel.
+#      always runs on the *current* device.
 #
 #  Build
 #    docker build -t cumvs .
@@ -50,10 +49,10 @@
 ARG CUDA_VERSION=12.4.1
 ARG UBUNTU_VERSION=22.04
 ARG OPENCV_VERSION=4.10.0
-# NVIDIA L40 = Ada Lovelace = compute capability 8.9.
-# Other values: 80 (A100), 86 (RTX 30xx), 90 (H100).
-ARG CUDA_ARCH_BIN=89
-ARG CUDA_ARCH_PTX=89
+# NVIDIA GeForce GTX 1080 Ti = Pascal = compute capability 6.1 (sm_61).
+# Other values: 80 (A100), 86 (RTX 30xx), 89 (L40), 90 (H100).
+ARG CUDA_ARCH_BIN=61
+ARG CUDA_ARCH_PTX=61
 
 # -----------------------------------------------------------------------------
 # Stage 1: build OpenCV (+ contrib) with CUDA support and the VTK-backed viz

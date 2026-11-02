@@ -2,10 +2,16 @@
 #  Convenience wrapper around the Dockerfile in this repo.
 #
 #    docker compose build              # builds the image (OpenCV + CUMVS)
-#    docker compose run --rm cumvs     # interactive shell with all 3 L40s
+#    docker compose run --rm cumvs     # interactive shell with the GTX 1080 Ti
 #
 #  Requires the NVIDIA Container Toolkit on the host
 #  (https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/).
+#
+#  Values (CUDA version, OpenCV version, and the GPU architecture) are taken
+#  from the .env file in this directory, which lets the same compose file run
+#  on this host (GTX 1080 Ti, sm_61) and the L40 host (sm_89).  Every
+#  ${VAR:-default} falls back to a working default, so compose works even if
+#  .env is missing.
 #
 #  The `gpus: all` key needs Docker Compose v2.30+.  On older versions use
 #  `runtime: nvidia` together with the NVIDIA_VISIBLE_DEVICES env var.
@@ -17,11 +23,12 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        CUDA_VERSION: "12.4.1"
-        UBUNTU_VERSION: "22.04"
-        OPENCV_VERSION: "4.10.0"
-        CUDA_ARCH_BIN: "89"   # NVIDIA L40 (Ada Lovelace, sm_89)
-        CUDA_ARCH_PTX: "89"
+        # Values come from .env; the fallbacks keep the file usable without it.
+        CUDA_VERSION: "${CUDA_VERSION:-12.4.1}"
+        UBUNTU_VERSION: "${UBUNTU_VERSION:-22.04}"
+        OPENCV_VERSION: "${OPENCV_VERSION:-4.10.0}"
+        CUDA_ARCH_BIN: "${CUDA_ARCH_BIN:-61}"   # host GPU: 61 = 1080 Ti, 89 = L40
+        CUDA_ARCH_PTX: "${CUDA_ARCH_PTX:-61}"
     image: cumvs:latest
     container_name: cumvs
     working_dir: /workspace/cumvs
@@ -30,13 +37,22 @@ services:
       # stay in /opt/cumvs-build (and on PATH); rebuild explicitly after
       # editing the sources.
       - .:/workspace/cumvs
-      - /media/nvme3/sblaue/Wedel:/Data
+      # Optional read-only dataset mount.  Its source comes from DATA_MOUNT_SOURCE
+      # in .env (per host).  A missing source directory makes `docker compose run`
+      # fail at startup, so on a host with no dataset remove/comment this line.
+      - ${DATA_MOUNT_SOURCE}:/Data:ro
     gpus: all
     environment:
       NVIDIA_VISIBLE_DEVICES: "all"
       NVIDIA_DRIVER_CAPABILITIES: "compute,utility,graphics"
-      # Pin a single GPU by uncommenting and adapting the two lines above:
-      #   NVIDIA_VISIBLE_DEVICES: "1"
-      #   CUDA_VISIBLE_DEVICES: "1"
+      # Target uid/gid for the entrypoint's privilege drop (see docker/entrypoint.sh).
+      # Empty -> the entrypoint auto-detects the owner of /workspace/cumvs, i.e.
+      # the user who invoked `docker compose`.  Set them in .env to override.
+      CUMVS_UID: "${CUMVS_UID:-}"
+      CUMVS_GID: "${CUMVS_GID:-}"
+      CUMVS_USER: "${CUMVS_USER:-}"
+      # This host has a single GPU, so there is nothing to pin.  (On a
+      # multi-GPU host you could select one with NVIDIA_VISIBLE_DEVICES /
+      # CUDA_VISIBLE_DEVICES instead of "all".)
     stdin_open: true
     tty: true
